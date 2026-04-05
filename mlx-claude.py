@@ -382,6 +382,7 @@ def main() -> int:
     args, claude_args = parser.parse_known_args()
 
     choice: Profile | None = None
+    use_bare = False
     if args.profile:
         choice = next((p for p in PROFILES if p.alias == args.profile), None)
         if choice is None:
@@ -398,6 +399,17 @@ def main() -> int:
         kv = pick_context_size(choice.max_kv_size)
         if kv != choice.max_kv_size:
             choice = replace(choice, max_kv_size=kv)
+        # Third prompt: --bare mode. Strongly recommended for non-Anthropic
+        # backends — skips CLAUDE.md auto-discovery, hooks, plugin sync, MCP
+        # discovery, auto-memory. Without it Claude Code slams the full
+        # context into turn 1 and you wait minutes for prefill.
+        bare_ans = questionary.confirm(
+            "Launch with --bare? (skips CLAUDE.md/hooks/plugins/MCP autoloading — huge prefill win)",
+            default=True,
+        ).ask()
+        if bare_ans is None:
+            return 0
+        use_bare = bool(bare_ans)
 
     check_prereqs(choice)
     cfg = write_litellm_config(choice)
@@ -451,12 +463,15 @@ def main() -> int:
         env["ANTHROPIC_API_KEY"] = ""
         env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{PROXY_PORT}"
 
-        console.print(f"\n[bold]Launching:[/] claude --model {choice.alias}")
+        claude_launch = ["claude", "--model", choice.alias]
+        if use_bare:
+            claude_launch.append("--bare")
+        claude_launch.extend(claude_args)
+
+        console.print(f"\n[bold]Launching:[/] {' '.join(claude_launch)}")
         console.print(f"[dim](logs: {mlx_log}  {proxy_log})[/]\n")
 
-        return subprocess.run(
-            ["claude", "--model", choice.alias, *claude_args], env=env
-        ).returncode
+        return subprocess.run(claude_launch, env=env).returncode
     except KeyboardInterrupt:
         return 130
     finally:
