@@ -266,15 +266,18 @@ _CONTEXT_CHOICES: list[tuple[str, int | str]] = [
 def pick_context_size(default: int) -> int:
     """Second interactive prompt: override profile's max_kv_size. Returns
     the picked integer (falls back to `default` if the user aborts)."""
-    default_label = next(
-        (lbl for lbl, v in _CONTEXT_CHOICES if v == default), None,
+    # questionary's `default` wants one of the choice VALUES, not a label.
+    # If the profile's default isn't in our preset list, pass None and let
+    # questionary highlight the first option.
+    default_value = next(
+        (v for _, v in _CONTEXT_CHOICES if v == default), None,
     )
     picked = questionary.select(
         "Context window (max_kv_size):",
         choices=[
             questionary.Choice(title=lbl, value=v) for lbl, v in _CONTEXT_CHOICES
         ],
-        default=default_label,
+        default=default_value,
     ).ask()
     if picked is None:      # Ctrl-C
         return default
