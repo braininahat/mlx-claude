@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 *.log
 *.whl
+.brains_in_a_hat/

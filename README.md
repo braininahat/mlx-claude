@@ -9,9 +9,11 @@ Pick a model from a menu → the script spins up `mlx_lm.server` (text) or `mlx_
 Claude Code speaks the **Anthropic** API shape (`POST /v1/messages`). MLX's servers only speak the **OpenAI** shape (`/v1/chat/completions`). So `ANTHROPIC_BASE_URL` can't point directly at them — a translator sits between. LiteLLM's `/v1/messages` endpoint does exactly that.
 
 ```
-claude CLI ──POST /v1/messages──▶ LiteLLM :11434 ──POST /v1/chat/completions──▶ mlx_{lm,vlm}.server :8080 ──▶ MLX model
-            (Anthropic shape)       (translator)           (OpenAI shape)
+claude CLI ──POST /v1/messages──▶ LiteLLM :11434 ──POST /v1/chat/completions──▶ sse-sanitizer :8081 ──▶ mlx_{lm,vlm}.server :8080 ──▶ MLX model
+            (Anthropic shape)       (translator)         (OpenAI shape)         (strips tool_calls:[])
 ```
+
+The `sse-sanitizer` strips `tool_calls: []` from streaming chunks to work around a LiteLLM bug (see TODO-LITELLM-ISSUE) that drops text content when that field is present but empty.
 
 ## Install
 

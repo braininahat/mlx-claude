@@ -36,12 +36,20 @@ from rich.console import Console
 
 console = Console()
 
-MLX_PORT = 8080
-PROXY_PORT = 11434
+MLX_PORT = 8080        # mlx_lm.server / mlx_vlm.server backend
+SANITIZER_PORT = 8081  # strips tool_calls:[] from SSE chunks (LiteLLM bug workaround)
+PROXY_PORT = 11434     # LiteLLM /v1/messages endpoint for Claude Code
 PYTHON_VER = "3.12"
 MIN_CONTEXT_WARN = 65536   # Ollama-docs recommended ≥64k for Claude Code
-FORK_WHEEL = Path.home() / "Desktop" / \
-    "mlx-0.31.2.dev20260404+72ec298f-cp312-cp312-macosx_26_0_arm64.whl"
+
+# Prebuilt PrismML-fork MLX wheel for the Bonsai 1-bit profile.
+# Fetched lazily the first time a profile needs it.
+FORK_WHEEL_NAME = "mlx-0.31.2.dev20260404+72ec298f-cp312-cp312-macosx_26_0_arm64.whl"
+FORK_WHEEL_URL = (
+    "https://github.com/braininahat/mlx-claude/releases/download/v0.1.0/"
+    + FORK_WHEEL_NAME
+)
+FORK_WHEEL = Path.home() / ".local" / "share" / "mlx-claude" / "wheels" / FORK_WHEEL_NAME
 
 
 @dataclass(frozen=True)
@@ -124,7 +132,7 @@ model_list:
   - model_name: {p.alias}
     litellm_params:
       model: openai/{p.hf_model_id}
-      api_base: http://127.0.0.1:{MLX_PORT}/v1
+      api_base: http://127.0.0.1:{SANITIZER_PORT}/v1
       api_key: none
       temperature: {s.temperature}
       top_p: {s.top_p}
@@ -152,12 +160,20 @@ def wait_ready(url: str, timeout_s: int, what: str) -> None:
     die(f"{what} did not become ready at {url} within {timeout_s}s. Check logs.")
 
 
-def start_proc(cmd: list[str], log_path: Path) -> subprocess.Popen:
+def start_proc(
+    cmd: list[str],
+    log_path: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen:
     f = log_path.open("w")
     console.print(f"[dim]$ {' '.join(cmd)}[/]")
+    proc_env = os.environ.copy()
+    if env:
+        proc_env.update(env)
     return subprocess.Popen(
         cmd, stdout=f, stderr=subprocess.STDOUT,
         start_new_session=True,
+        env=proc_env,
     )
 
 
@@ -214,6 +230,12 @@ def litellm_cmd(cfg: Path) -> list[str]:
     ]
 
 
+def sanitizer_cmd() -> list[str]:
+    """Run sse_sanitizer.py as a uv script — it's a sibling file."""
+    shim_path = Path(__file__).with_name("sse_sanitizer.py")
+    return ["uv", "run", "--quiet", str(shim_path)]
+
+
 def print_sampling_status(p: Profile) -> None:
     s = p.sampling
     console.print(
@@ -229,13 +251,107 @@ def print_sampling_status(p: Profile) -> None:
         )
 
 
+def run_smoke(choice: Profile) -> int:
+    """Headless e2e test: hit /v1/messages non-stream + stream, assert valid."""
+    url = f"http://127.0.0.1:{PROXY_PORT}/v1/messages"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": "dummy",
+        "anthropic-version": "2023-06-01",
+    }
+    # Non-streaming
+    body = {
+        "model": choice.alias,
+        "max_tokens": 20,
+        "messages": [{"role": "user", "content": "reply with the single word OK"}],
+    }
+    console.print("[cyan]smoke: non-stream POST /v1/messages ...[/]")
+    try:
+        r = httpx.post(url, json=body, headers=headers, timeout=300)
+    except httpx.HTTPError as e:
+        console.print(f"[red]SMOKE FAIL[/] non-stream request error: {e}")
+        return 1
+    if r.status_code != 200:
+        console.print(
+            f"[red]SMOKE FAIL[/] non-stream: HTTP {r.status_code} {r.text[:400]}"
+        )
+        return 1
+    try:
+        text = r.json()["content"][0]["text"]
+    except (KeyError, IndexError, ValueError) as e:
+        console.print(f"[red]SMOKE FAIL[/] non-stream: bad body ({e}): {r.text[:400]}")
+        return 1
+    if not text.strip():
+        console.print("[red]SMOKE FAIL[/] non-stream: empty content text")
+        return 1
+    preview = text.strip().replace("\n", " ")[:80]
+    console.print(f"[green]SMOKE OK[/] non-stream: {preview!r}")
+
+    # Streaming
+    stream_body = {
+        "model": choice.alias,
+        "max_tokens": 20,
+        "stream": True,
+        "messages": [{"role": "user", "content": "count from one to three"}],
+    }
+    console.print("[cyan]smoke: stream POST /v1/messages ...[/]")
+    saw_message_start = False
+    saw_text_delta = False
+    try:
+        with httpx.stream(
+            "POST", url, json=stream_body, headers=headers, timeout=300,
+        ) as r:
+            if r.status_code != 200:
+                console.print(
+                    f"[red]SMOKE FAIL[/] stream: HTTP {r.status_code}"
+                )
+                return 1
+            for line in r.iter_lines():
+                if line.startswith("event: message_start"):
+                    saw_message_start = True
+                if line.startswith("data: ") and "text_delta" in line:
+                    saw_text_delta = True
+    except httpx.HTTPError as e:
+        console.print(f"[red]SMOKE FAIL[/] stream request error: {e}")
+        return 1
+    if not saw_message_start:
+        console.print("[red]SMOKE FAIL[/] stream: no 'event: message_start'")
+        return 1
+    if not saw_text_delta:
+        console.print("[red]SMOKE FAIL[/] stream: no text_delta events")
+        return 1
+    console.print("[green]SMOKE OK[/] stream: message_start + text_delta observed")
+    return 0
+
+
 def main() -> int:
-    choice: Profile | None = questionary.select(
-        "Pick an MLX model for Claude Code:",
-        choices=[questionary.Choice(title=p.label, value=p) for p in PROFILES],
-    ).ask()
-    if choice is None:
-        return 0
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="TUI launcher for Claude Code against local MLX models",
+        add_help=True,
+    )
+    parser.add_argument(
+        "--smoke", action="store_true",
+        help="run headless e2e HTTP tests against the stack, then exit (no claude UI)",
+    )
+    parser.add_argument(
+        "--profile", help="select profile by alias (skips the menu)",
+    )
+    args, claude_args = parser.parse_known_args()
+
+    choice: Profile | None = None
+    if args.profile:
+        choice = next((p for p in PROFILES if p.alias == args.profile), None)
+        if choice is None:
+            aliases = ", ".join(p.alias for p in PROFILES)
+            die(f"profile {args.profile!r} not found. available: {aliases}")
+    else:
+        choice = questionary.select(
+            "Pick an MLX model for Claude Code:",
+            choices=[questionary.Choice(title=p.label, value=p) for p in PROFILES],
+        ).ask()
+        if choice is None:
+            return 0
 
     check_prereqs(choice)
     cfg = write_litellm_config(choice)
@@ -254,12 +370,35 @@ def main() -> int:
         )
         console.print("  [green]ready[/]")
 
+        sanitizer_log = Path(f"/tmp/sanitizer-{SANITIZER_PORT}.log")
+        console.print(f"[cyan]Starting SSE sanitizer[/] on :{SANITIZER_PORT} "
+                      "[dim](strips tool_calls:[] from stream chunks)[/] ...")
+        procs.append(start_proc(
+            sanitizer_cmd(), sanitizer_log,
+            env={"BACKEND_URL": f"http://127.0.0.1:{MLX_PORT}",
+                 "SANITIZER_PORT": str(SANITIZER_PORT)},
+        ))
+        wait_ready(
+            f"http://127.0.0.1:{SANITIZER_PORT}/v1/models", 60, "sse sanitizer",
+        )
+        console.print("  [green]ready[/]")
+
         console.print(f"[cyan]Starting LiteLLM proxy[/] on :{PROXY_PORT} ...")
-        procs.append(start_proc(litellm_cmd(cfg), proxy_log))
+        # LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES forces
+        # /v1/messages -> /v1/chat/completions on the backend, instead of
+        # the default /v1/responses routing for openai/ models (which MLX
+        # servers don't expose). See litellm handler.py:36-44.
+        procs.append(start_proc(
+            litellm_cmd(cfg), proxy_log,
+            env={"LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES": "true"},
+        ))
         wait_ready(
             f"http://127.0.0.1:{PROXY_PORT}/v1/models", 120, "litellm proxy",
         )
         console.print("  [green]ready[/]")
+
+        if args.smoke:
+            return run_smoke(choice)
 
         env = os.environ.copy()
         env["ANTHROPIC_AUTH_TOKEN"] = "dummy"
@@ -270,7 +409,7 @@ def main() -> int:
         console.print(f"[dim](logs: {mlx_log}  {proxy_log})[/]\n")
 
         return subprocess.run(
-            ["claude", "--model", choice.alias, *sys.argv[1:]], env=env
+            ["claude", "--model", choice.alias, *claude_args], env=env
         ).returncode
     except KeyboardInterrupt:
         return 130
