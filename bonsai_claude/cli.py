@@ -32,7 +32,7 @@ PREFS_PATH = Path.home() / ".mlx_claude" / "prefs.json"
 # Prebuilt PrismML-fork MLX wheel (required for 1-bit quantization support).
 FORK_WHEEL_NAME = "mlx-0.31.2.dev20260404+72ec298f-cp312-cp312-macosx_26_0_arm64.whl"
 FORK_WHEEL_URL = (
-    "https://github.com/braininahat/mlx-claude/releases/download/v0.1.0/"
+    "https://github.com/braininahat/bonsai-claude/releases/download/v0.1.0/"
     + FORK_WHEEL_NAME
 )
 FORK_WHEEL = Path.home() / ".local" / "share" / "mlx-claude" / "wheels" / FORK_WHEEL_NAME

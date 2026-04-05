@@ -1,5 +1,10 @@
 # bonsai-claude
 
+[![PyPI](https://img.shields.io/pypi/v/bonsai-claude.svg)](https://pypi.org/project/bonsai-claude/)
+[![Python](https://img.shields.io/pypi/pyversions/bonsai-claude.svg)](https://pypi.org/project/bonsai-claude/)
+[![License](https://img.shields.io/github/license/braininahat/bonsai-claude.svg)](https://github.com/braininahat/bonsai-claude/blob/master/LICENSE)
+[![Downloads](https://img.shields.io/pypi/dm/bonsai-claude.svg)](https://pypi.org/project/bonsai-claude/)
+
 Run [Claude Code](https://docs.claude.com/en/docs/claude-code) locally on [Bonsai 8B 1-bit](https://huggingface.co/prism-ml/Bonsai-8B-mlx-1bit) — [PrismML](https://prismml.com)'s 1-bit quantized Qwen3-8B — via Apple [MLX](https://github.com/ml-explore/mlx). No Anthropic API key; no tokens leave your Mac.
 
 ## Install

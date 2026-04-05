@@ -36,9 +36,9 @@ dependencies = [
 bonsai-claude = "bonsai_claude.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/braininahat/mlx-claude"
-Repository = "https://github.com/braininahat/mlx-claude"
-Issues = "https://github.com/braininahat/mlx-claude/issues"
+Homepage = "https://github.com/braininahat/bonsai-claude"
+Repository = "https://github.com/braininahat/bonsai-claude"
+Issues = "https://github.com/braininahat/bonsai-claude/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["bonsai_claude"]
