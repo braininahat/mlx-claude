@@ -26,7 +26,6 @@ import os
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -38,9 +37,8 @@ from rich.console import Console
 
 console = Console()
 
-MLX_PORT = 8080        # mlx_lm.server / mlx_vlm.server backend
-SANITIZER_PORT = 8081  # strips tool_calls:[] from SSE chunks (LiteLLM bug workaround)
-PROXY_PORT = 11434     # LiteLLM /v1/messages endpoint for Claude Code
+MLX_PORT = 8080     # mlx_lm.server / mlx_vlm.server backend
+PROXY_PORT = 11434  # anthropic_shim /v1/messages endpoint for Claude Code
 PYTHON_VER = "3.12"
 MIN_CONTEXT_WARN = 65536   # Ollama-docs recommended ≥64k for Claude Code
 PREFS_PATH = Path.home() / ".mlx_claude" / "prefs.json"
@@ -127,47 +125,7 @@ def check_prereqs(p: Profile) -> None:
                 die(f"wheel/path not found: {path_part}")
 
 
-def write_litellm_config(p: Profile) -> Path:
-    s = p.sampling
-    cfg = Path(tempfile.mkstemp(prefix="litellm-", suffix=".yaml")[1])
-    # Two entries:
-    # 1) the named profile alias ("bonsai"/"qwen") — what mlx-claude passes
-    #    to `claude --model <alias>`.
-    # 2) a wildcard "*" catch-all that routes any other model name to the
-    #    same backend. Claude Code sometimes makes internal sub-calls with
-    #    Anthropic model names like `claude-haiku-4-5-20251001`; without
-    #    the wildcard, LiteLLM 400s them as "model not found" and Claude
-    #    Code degrades (falls back / silently loses tool classification).
-    cfg.write_text(f"""\
-model_list:
-  - model_name: {p.alias}
-    litellm_params:
-      model: openai/{p.hf_model_id}
-      api_base: http://127.0.0.1:{SANITIZER_PORT}/v1
-      api_key: none
-      temperature: {s.temperature}
-      top_p: {s.top_p}
-      max_tokens: {s.max_tokens}
-      extra_body:
-        top_k: {s.top_k}
-        min_p: {s.min_p}
-        repetition_penalty: {s.repetition_penalty}
-  - model_name: "*"
-    litellm_params:
-      model: openai/{p.hf_model_id}
-      api_base: http://127.0.0.1:{SANITIZER_PORT}/v1
-      api_key: none
-      temperature: {s.temperature}
-      top_p: {s.top_p}
-      max_tokens: {s.max_tokens}
-      extra_body:
-        top_k: {s.top_k}
-        min_p: {s.min_p}
-        repetition_penalty: {s.repetition_penalty}
-litellm_settings:
-  drop_params: true
-""")
-    return cfg
+# (LiteLLM + sanitizer removed; stack is now claude → anthropic_shim → mlx server)
 
 
 def wait_ready(url: str, timeout_s: int, what: str) -> None:
@@ -245,19 +203,11 @@ def mlx_cmd(p: Profile) -> list[str]:
     return cmd
 
 
-def litellm_cmd(cfg: Path) -> list[str]:
-    return [
-        "uvx", "--python", PYTHON_VER, "--from", "litellm[proxy]",
-        "litellm", "--config", str(cfg),
-        "--port", str(PROXY_PORT), "--host", "127.0.0.1",
-    ]
-
-
-def sanitizer_cmd() -> list[str]:
-    """Run sse_sanitizer.py as a uv script — it's a sibling file.
+def shim_cmd() -> list[str]:
+    """Run anthropic_shim.py as a uv script — it's a sibling file.
     `resolve()` handles the symlinked install (install.sh puts the
     bin symlink in ~/.local/bin pointing at the repo checkout)."""
-    shim_path = Path(__file__).resolve().with_name("sse_sanitizer.py")
+    shim_path = Path(__file__).resolve().with_name("anthropic_shim.py")
     return ["uv", "run", "--quiet", str(shim_path)]
 
 
@@ -535,9 +485,8 @@ def main() -> int:
         save_project_prefs(choice.alias, choice.max_kv_size, use_bare)
 
     check_prereqs(choice)
-    cfg = write_litellm_config(choice)
     mlx_log = Path(f"/tmp/mlx-{MLX_PORT}.log")
-    proxy_log = Path(f"/tmp/litellm-{PROXY_PORT}.log")
+    shim_log = Path(f"/tmp/anthropic-shim-{PROXY_PORT}.log")
     procs: list[subprocess.Popen] = []
 
     try:
@@ -551,30 +500,20 @@ def main() -> int:
         )
         console.print("  [green]ready[/]")
 
-        sanitizer_log = Path(f"/tmp/sanitizer-{SANITIZER_PORT}.log")
-        console.print(f"[cyan]Starting SSE sanitizer[/] on :{SANITIZER_PORT} "
-                      "[dim](strips tool_calls:[] from stream chunks)[/] ...")
+        console.print(f"[cyan]Starting anthropic_shim[/] on :{PROXY_PORT} "
+                      "[dim](Anthropic↔OpenAI adapter)[/] ...")
         procs.append(start_proc(
-            sanitizer_cmd(), sanitizer_log,
-            env={"BACKEND_URL": f"http://127.0.0.1:{MLX_PORT}",
-                 "SANITIZER_PORT": str(SANITIZER_PORT)},
+            shim_cmd(), shim_log,
+            env={
+                "BACKEND_URL": f"http://127.0.0.1:{MLX_PORT}",
+                "MODEL_ALIAS": choice.alias,
+                "MODEL_ID": choice.hf_model_id,
+                "SHIM_PORT": str(PROXY_PORT),
+                "SHIM_HOST": "127.0.0.1",
+            },
         ))
         wait_ready(
-            f"http://127.0.0.1:{SANITIZER_PORT}/v1/models", 60, "sse sanitizer",
-        )
-        console.print("  [green]ready[/]")
-
-        console.print(f"[cyan]Starting LiteLLM proxy[/] on :{PROXY_PORT} ...")
-        # LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES forces
-        # /v1/messages -> /v1/chat/completions on the backend, instead of
-        # the default /v1/responses routing for openai/ models (which MLX
-        # servers don't expose). See litellm handler.py:36-44.
-        procs.append(start_proc(
-            litellm_cmd(cfg), proxy_log,
-            env={"LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES": "true"},
-        ))
-        wait_ready(
-            f"http://127.0.0.1:{PROXY_PORT}/v1/models", 120, "litellm proxy",
+            f"http://127.0.0.1:{PROXY_PORT}/v1/models", 60, "anthropic_shim",
         )
         console.print("  [green]ready[/]")
 
@@ -595,7 +534,7 @@ def main() -> int:
         claude_launch.extend(claude_args)
 
         console.print(f"\n[bold]Launching:[/] {' '.join(claude_launch)}")
-        console.print(f"[dim](logs: {mlx_log}  {proxy_log})[/]\n")
+        console.print(f"[dim](logs: {mlx_log}  {shim_log})[/]\n")
 
         return subprocess.run(claude_launch, env=env).returncode
     except KeyboardInterrupt:
@@ -603,7 +542,6 @@ def main() -> int:
     finally:
         console.print("[dim]stopping backends ...[/]")
         shutdown(procs)
-        cfg.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

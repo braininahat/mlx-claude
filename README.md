@@ -6,14 +6,14 @@ Pick a model from a menu → the script spins up `mlx_lm.server` (text) or `mlx_
 
 ## Why this exists
 
-Claude Code speaks the **Anthropic** API shape (`POST /v1/messages`). MLX's servers only speak the **OpenAI** shape (`/v1/chat/completions`). So `ANTHROPIC_BASE_URL` can't point directly at them — a translator sits between. LiteLLM's `/v1/messages` endpoint does exactly that.
+Claude Code speaks the **Anthropic** API shape (`POST /v1/messages`). MLX's servers only speak the **OpenAI** shape (`/v1/chat/completions`). So `ANTHROPIC_BASE_URL` can't point directly at them — a translator sits between.
 
 ```
-claude CLI ──POST /v1/messages──▶ LiteLLM :11434 ──POST /v1/chat/completions──▶ sse-sanitizer :8081 ──▶ mlx_{lm,vlm}.server :8080 ──▶ MLX model
-            (Anthropic shape)       (translator)         (OpenAI shape)         (strips tool_calls:[])
+claude CLI ──POST /v1/messages──▶ anthropic_shim :11434 ──POST /v1/chat/completions──▶ mlx_{lm,vlm}.server :8080 ──▶ MLX model
+            (Anthropic shape)       (direct adapter)         (OpenAI shape)
 ```
 
-The `sse-sanitizer` strips `tool_calls: []` from streaming chunks to work around a LiteLLM bug ([BerriAI/litellm#25172](https://github.com/BerriAI/litellm/issues/25172)) that drops text content when that field is present but empty.
+`anthropic_shim.py` is a direct Anthropic↔OpenAI adapter ported from [ollama/anthropic/anthropic.go](https://github.com/ollama/ollama/blob/main/anthropic/anthropic.go) (MIT — attribution in `NOTICE`). It handles request/response translation and the streaming state machine including correct `input_json_delta` events for tool_calls, which LiteLLM's chat→anthropic adapter does not emit properly ([BerriAI/litellm#25172](https://github.com/BerriAI/litellm/issues/25172) is a related bug we hit earlier).
 
 ## Install
 

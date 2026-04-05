@@ -1,0 +1,21 @@
+mlx-claude — NOTICE
+
+This project includes code ported from Ollama.
+
+Ollama
+------
+Copyright (c) 2023-2024 Ollama
+Licensed under the MIT License
+https://github.com/ollama/ollama
+
+The following file contains work ported from Ollama:
+
+  anthropic_shim.py
+    — Translation logic for Anthropic Messages API <-> OpenAI Chat
+      Completions adapted from ollama/anthropic/anthropic.go (request
+      conversion, response conversion, streaming state machine).
+      The Python port retargets the output from Ollama's internal
+      api.ChatRequest/Response to OpenAI chat/completions shape.
+
+A copy of the MIT License can be found at:
+  https://github.com/ollama/ollama/blob/main/LICENSE
