@@ -130,9 +130,29 @@ def check_prereqs(p: Profile) -> None:
 def write_litellm_config(p: Profile) -> Path:
     s = p.sampling
     cfg = Path(tempfile.mkstemp(prefix="litellm-", suffix=".yaml")[1])
+    # Two entries:
+    # 1) the named profile alias ("bonsai"/"qwen") — what mlx-claude passes
+    #    to `claude --model <alias>`.
+    # 2) a wildcard "*" catch-all that routes any other model name to the
+    #    same backend. Claude Code sometimes makes internal sub-calls with
+    #    Anthropic model names like `claude-haiku-4-5-20251001`; without
+    #    the wildcard, LiteLLM 400s them as "model not found" and Claude
+    #    Code degrades (falls back / silently loses tool classification).
     cfg.write_text(f"""\
 model_list:
   - model_name: {p.alias}
+    litellm_params:
+      model: openai/{p.hf_model_id}
+      api_base: http://127.0.0.1:{SANITIZER_PORT}/v1
+      api_key: none
+      temperature: {s.temperature}
+      top_p: {s.top_p}
+      max_tokens: {s.max_tokens}
+      extra_body:
+        top_k: {s.top_k}
+        min_p: {s.min_p}
+        repetition_penalty: {s.repetition_penalty}
+  - model_name: "*"
     litellm_params:
       model: openai/{p.hf_model_id}
       api_base: http://127.0.0.1:{SANITIZER_PORT}/v1
