@@ -17,33 +17,17 @@ The `sse-sanitizer` strips `tool_calls: []` from streaming chunks to work around
 
 ## Install
 
-**One-line (recommended):**
-
-```bash
-curl -sSfL https://raw.githubusercontent.com/braininahat/mlx-claude/master/bootstrap.sh | bash
-```
-
-Installs to `~/.local/bin/mlx-claude`. Re-run to update.
-
-**Zero-install (try once):**
-
-```bash
-uv run https://raw.githubusercontent.com/braininahat/mlx-claude/master/mlx-claude.py
-```
-
-**From source (contributors):**
-
 ```bash
 git clone https://github.com/braininahat/mlx-claude
-cd mlx-claude && ./install.sh
+cd mlx-claude
+./install.sh
 ```
 
-**Uninstall:**
+Installs `~/.local/bin/mlx-claude` as a symlink to the clone, so the repo is your source of truth.
 
-```bash
-curl -sSfL https://raw.githubusercontent.com/braininahat/mlx-claude/master/uninstall.sh | bash
-# or if you cloned: ./uninstall.sh
-```
+**Update:** `cd mlx-claude && git pull && ./install.sh`
+
+**Uninstall:** `./uninstall.sh` from the clone.
 
 ## Requirements
 

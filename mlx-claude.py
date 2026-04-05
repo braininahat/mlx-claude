@@ -232,8 +232,8 @@ def litellm_cmd(cfg: Path) -> list[str]:
 
 def sanitizer_cmd() -> list[str]:
     """Run sse_sanitizer.py as a uv script — it's a sibling file.
-    `resolve()` handles the symlinked install (bootstrap.sh puts the
-    bin symlink in ~/.local/bin and the real file in ~/.local/share)."""
+    `resolve()` handles the symlinked install (install.sh puts the
+    bin symlink in ~/.local/bin pointing at the repo checkout)."""
     shim_path = Path(__file__).resolve().with_name("sse_sanitizer.py")
     return ["uv", "run", "--quiet", str(shim_path)]
 

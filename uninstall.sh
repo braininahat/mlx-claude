@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Remove the mlx-claude symlink and (if present) the bootstrapped lib dir.
+# Remove the mlx-claude symlink and (if present) any legacy lib dir
+# left over from earlier one-line-installer days.
 
 set -euo pipefail
 
