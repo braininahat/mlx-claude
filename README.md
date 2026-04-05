@@ -15,19 +15,38 @@ claude CLI ──POST /v1/messages──▶ LiteLLM :11434 ──POST /v1/chat/c
 
 ## Install
 
+**One-line (recommended):**
+
 ```bash
-git clone https://github.com/braininahat/mlx-claude.git
-cd mlx-claude
-./install.sh          # symlinks mlx-claude → ~/.local/bin/mlx-claude
-mlx-claude            # run from anywhere
+curl -sSfL https://raw.githubusercontent.com/braininahat/mlx-claude/master/bootstrap.sh | bash
 ```
 
-Uninstall: `./uninstall.sh`
+Installs to `~/.local/bin/mlx-claude`. Re-run to update.
+
+**Zero-install (try once):**
+
+```bash
+uv run https://raw.githubusercontent.com/braininahat/mlx-claude/master/mlx-claude.py
+```
+
+**From source (contributors):**
+
+```bash
+git clone https://github.com/braininahat/mlx-claude
+cd mlx-claude && ./install.sh
+```
+
+**Uninstall:**
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/braininahat/mlx-claude/master/uninstall.sh | bash
+# or if you cloned: ./uninstall.sh
+```
 
 ## Requirements
 
 - Apple Silicon Mac
-- [`uv`](https://docs.astral.sh/uv/) on PATH (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- [`uv`](https://docs.astral.sh/uv/) on PATH — install first: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - [`claude`](https://docs.claude.com/en/docs/claude-code/setup) CLI on PATH
 - Python 3.12 (managed by `uv` automatically)
 
